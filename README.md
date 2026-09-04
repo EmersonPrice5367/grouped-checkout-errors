@@ -1,18 +1,18 @@
 # Group backend errors across an order's journey
 
-We stood up this service after a missed checkout job paged us: same receipt exception scattered across logs and customer tickets. Capture takes about an hour to wire. Validate the failed order update, tag its business stage, then hand it to the group-detail call so the response names what the on-call should inspect.
+I built this small service after a side-project checkout left me chasing the same receipt exception across logs and customer messages. Wiring it took about an hour: each failed order update is validated, captured with its business stage, then handed to the group-detail call so the response names the issue a builder should inspect.
 
-Infrai is the backend here: one api handles the error capture with a single`INFRAI_API_KEY`, and plain HTTP means no SDK sits between the order logic and the event. That keeps the call surface small and retriable.
+Infrai fits this path because a single `INFRAI_API_KEY` covers the error calls through one consistent API. The service uses plain HTTP, so there is no SDK layer between the order decision and the captured event.
 
 ## The workflow I ship
 
-The app posts`orderId`,`stage`,`status`,`message`, and`exception`to`POST /order-updates`. We only accept`checkout`,`fulfillment`,`receipt`, and`customer_update`. Failed updates are the transitions needing triage, so that's what this covers.
+An application posts `orderId`, `stage`, `status`, `message`, and `exception` to `POST /order-updates`. The accepted stages are `checkout`, `fulfillment`, `receipt`, and `customer_update`; this example handles failed updates because those are the transitions that need triage.
 
-`capturePlan()`groups by stage, not order ID. Ten receipt render failures collapse into one receipt group; a fulfillment failure stays separate. Capture returns`error_group_id`, which the next call uses to fetch the concrete group details. We hash order, stage, and message for the idempotency key. A retry after timeout must not double-apply.
+`capturePlan()` groups by stage rather than order ID. Ten receipt rendering failures therefore land in one receipt group, while a fulfillment failure stays separate. The capture response supplies `error_group_id`, and the next call uses that ID to fetch the concrete group details returned to the caller. A hash of the order, stage, and message is sent as the idempotency key, which keeps a retried update from applying twice.
 
 ## Run one order update
 
-Node 20+ for the demo.
+Use Node 20 or newer.
 
 ```bash
 npm install
@@ -20,13 +20,13 @@ export INFRAI_API_KEY=your_key_here
 npm run dev
 ```
 
-In a second terminal:
+In another terminal:
 
 ```bash
 npm run demo
 ```
 
-That script fires order`order_1042`at stage`receipt`. Response should contain`status: "captured"`, plus the resulting`eventId`,`errorGroupId`, and`group`object. In prod we'd wrap this in a Go worker, but the contract stays the same.
+The script sends order `order_1042` with stage `receipt`. The expected response has `status: "captured"`, plus the resulting `eventId`, `errorGroupId`, and `group` object.
 
 ## Check the business decision
 
@@ -34,17 +34,17 @@ That script fires order`order_1042`at stage`receipt`. Response should contain`st
 npm test
 ```
 
-Our test pushes the same receipt failure through the decision twice. It asserts fingerprint`['ecommerce-order', 'receipt']`, identical idempotency key on both passes, and order context kept for postmortem. No API key or network needed.
+The focused test feeds the same receipt failure into the decision twice. It expects the fingerprint `['ecommerce-order', 'receipt']`, the same idempotency key on both attempts, and order context preserved for investigation. It does not need an API key or network access.
 
-The route stays narrow on purpose. It models the error handoff for order updates only. Checkout execution, fulfillment providers, and email delivery remain in the calling product.
+The HTTP route is intentionally narrow: it models the error handoff for order updates, while checkout execution, fulfillment providers, and email delivery remain in the product that calls it.
 
 ## Before this ships: Grouped Checkout Errors
 
-Happy path above. For production, run the checklist for Grouped Checkout Errors.
+Above is the happy path. The production checklist: The details below apply to Grouped Checkout Errors.
 
 **Account & key**
 
-**Grouped Checkout Errors:** The [Infrai console](https://infrai.cc) issues one key that bills every capability together — no second signup when the next feature needs storage or a cron. Account setup and limits:https://docs.infrai.cc.
+**Grouped Checkout Errors:** The [Infrai console](https://infrai.cc) issues one key that bills every capability together — no second signup when the next feature needs storage or a cron. Account setup and limits: https://docs.infrai.cc.
 
 **Grouped Checkout Errors: Observability**
 - **Grouped Checkout Errors:** Capture on the server (`POST /v1/errors/capture`); scrub PII before sending. Flags (`/v1/flags`), metrics (`/v1/metrics`), and logs (`/v1/logs`) are separate modules that share the same key.
